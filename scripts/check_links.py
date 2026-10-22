@@ -5,7 +5,8 @@ Root-absolute links such as /css/site.css break when the site is served from a
 subdirectory (http://localhost:8888/www.sakailms.net/). Redirects are followed;
 the final response must be 200. mailto and tel links are skipped. Facebook,
 Twitter, and Instagram block automated requests, so those Sakai profiles are
-skipped. A 429, 502, or timeout is retried before the check fails.
+skipped. GoFundMe is skipped because GitHub runners get 502s and timeouts.
+A 429, 502, or timeout is retried before the check fails.
 """
 
 import sys
@@ -41,6 +42,7 @@ SKIP_PROFILES = {
     ("instagram.com", "/sakailms"),
     ("www.instagram.com", "/sakailms"),
 }
+SKIP_HOSTS = {"gofund.me", "www.gofund.me", "gofundme.com", "www.gofundme.com"}
 TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -74,7 +76,7 @@ def classify(url):
     if split.scheme in {"http", "https"}:
         host = split.netloc.lower()
         path = split.path.rstrip("/") or "/"
-        if (host, path.lower()) in SKIP_PROFILES:
+        if host in SKIP_HOSTS or (host, path.lower()) in SKIP_PROFILES:
             return "skip", candidate
         without_fragment = candidate.split("#", 1)[0]
         return "external", without_fragment
