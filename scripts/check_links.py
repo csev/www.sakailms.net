@@ -3,11 +3,13 @@
 
 Root-absolute links such as /css/site.css break when the site is served from a
 subdirectory (http://localhost:8888/www.sakailms.net/). Redirects are followed;
-the final response must be 200. mailto and tel links are skipped. Facebook
-blocks this checker with HTTP 400, so www.facebook.com/sakailms is skipped.
+the final response must be 200. mailto and tel links are skipped. Facebook,
+Twitter, and Instagram block automated requests, so those Sakai profiles are
+skipped. A 429, 502, or timeout is retried before the check fails.
 """
 
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +30,18 @@ URL_ATTRS = {
     "form": ("action",),
 }
 SKIP_SCHEMES = {"mailto", "tel", "javascript", "data"}
+# These profiles work in a browser and reject GitHub Actions with 400, 403, or 429.
+SKIP_PROFILES = {
+    ("facebook.com", "/sakailms"),
+    ("www.facebook.com", "/sakailms"),
+    ("twitter.com", "/sakailms"),
+    ("www.twitter.com", "/sakailms"),
+    ("x.com", "/sakailms"),
+    ("www.x.com", "/sakailms"),
+    ("instagram.com", "/sakailms"),
+    ("www.instagram.com", "/sakailms"),
+}
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -60,14 +74,14 @@ def classify(url):
     if split.scheme in {"http", "https"}:
         host = split.netloc.lower()
         path = split.path.rstrip("/") or "/"
-        if host in {"facebook.com", "www.facebook.com"} and path == "/sakailms":
+        if (host, path.lower()) in SKIP_PROFILES:
             return "skip", candidate
         without_fragment = candidate.split("#", 1)[0]
         return "external", without_fragment
     return "local", url
 
 
-def fetch_status(url):
+def fetch_once(url):
     request = urllib.request.Request(
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
@@ -81,6 +95,17 @@ def fetch_status(url):
         return error.code, getattr(error, "url", url), None
     except Exception as error:
         return None, url, str(error)
+
+
+def fetch_status(url):
+    result = fetch_once(url)
+    for attempt in range(2):
+        status, _final, error = result
+        if status == 200 or (status not in TRANSIENT_STATUS and not error):
+            return result
+        time.sleep(2 * (attempt + 1))
+        result = fetch_once(url)
+    return result
 
 
 def locate(page, url):
